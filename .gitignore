@@ -1,0 +1,8 @@
+node_modules
+*.report.json
+*.report.html
+.idea
+example.js
+npm-debug.log
+/dist
+/typings

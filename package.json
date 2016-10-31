@@ -1,0 +1,25 @@
+{
+  "name": "perf-battle",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "tsc",
+    "build-cli": "cd node_modules/lighthouse/lighthouse-cli && npm i && npm run build"
+  },
+  "devDependencies": {
+    "typescript": "2.0.6",
+    "typings": "1.5.0"
+  },
+  "dependencies": {
+    "lighthouse": "GoogleChrome/lighthouse",
+    "minimist": "^1.2.0",
+    "rx": "4.1.0"
+  },
+  "bin": {
+    "perf-battle": "dist/index.js"
+  }
+}
