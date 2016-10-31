@@ -8,13 +8,16 @@ const fs = require('fs');
 const pr = require(`${base}/lighthouse-cli/printer`);
 const ChromeLauncher = require(`${base}/lighthouse-cli/chrome-launcher`).ChromeLauncher;
 const perfOnlyConfig = require(`${base}/lighthouse-core/config/perf.json`);
-import Rx = require('rx');
 const assetSaver = require(`${base}/lighthouse-core/lib/asset-saver`);
 import {resolve} from 'path';
 import * as path from 'path';
 import {existsSync} from 'fs';
 import {Url} from "url";
+
+import Rx = require('rx');
+const {fromPromise, create, concat, just} = Rx.Observable;
 const parse = require('url').parse;
+const ora = require('ora');
 
 process.on('unhandledRejection', (reason) => {
     console.log('Reason: ' + reason);
@@ -31,10 +34,16 @@ function getTotalScore (aggregation) {
 const maybes = minimist(process.argv.slice(2))._;
 
 export type Runners = Rx.Observable<Result>[];
-export interface Result {
-    report: Report
-    input: Input
+export enum ResultTypes {
+    PreResult = <any>'PreResult',
+    Result = <any>'Result'
 }
+export interface Result {
+    report?: Report
+    input: Input
+    type: ResultTypes
+}
+
 export enum InputTypes {
     url     = <any>'url',
     file    = <any>'file',
@@ -89,14 +98,20 @@ if (!maybes.length) {
 
 function generateRunners (inputs: Input[]): Rx.Observable<Result>[] {
     return inputs.map(input => {
+        const base = just({type: ResultTypes.PreResult, input});
         if (input.type === InputTypes.file) {
-            return Rx.Observable.just<Result>({report: input.data, input});
+            return concat(
+                base,
+                just<Result>({type: ResultTypes.Result, input, report: input.data})
+            );
         }
         if (input.type === InputTypes.url) {
-            return Rx.Observable.create<Result>(obs => {
-                return Rx.Observable.fromPromise<Report>(lh(input.userInput, {}, perfOnlyConfig))
-                    .map(report => ({input, report}))
-                    .subscribe(obs);
+            return create<Result>(obs => {
+                concat(
+                    base,
+                    fromPromise<Report>(lh(input.userInput, {logLevel: 'silent'}, perfOnlyConfig))
+                        .map(report => ({type: ResultTypes.Result, input, report}))
+                ).subscribe(obs)
             });
         }
     });
@@ -161,11 +176,42 @@ function getJobs (maybes): Input[] {
 
 function run (runners: Runners) {
     const launcher = new ChromeLauncher();
-    const ready    = Rx.Observable.fromPromise(launcher.isDebuggerReady().catch(() => launcher.run())).ignoreElements();
+    const spinner  = ora('Connecting to Chrome').start();
+    const ready    = Rx.Observable
+        .fromPromise(launcher.isDebuggerReady().catch(() => launcher.run()))
+        .flatMap(() => {
+            return Rx.Observable.just(true)
+                .delay(500)
+                .do(() => spinner.succeed())
+        })
+        .ignoreElements();
 
-    Rx.Observable.concat(ready, Rx.Observable.from(runners).concatAll())
+    const jobs = Rx.Observable.from(runners)
+        .concatAll()
+        .do(x => {
+            if (x.type === ResultTypes.PreResult) {
+                if (x.input.type === InputTypes.url) {
+                    spinner.text = `Testing ${x.input.userInput}`;
+                    spinner.start()
+                }
+            }
+            if (x.type === ResultTypes.Result) {
+                spinner.succeed();
+            }
+        });
+
+
+        // .do((result: Result) => {
+        //     if (result.input.type === InputTypes.url) {
+        //         spinner.color = 'yellow';
+        //         spinner.text = result.input.userInput;
+        //     }
+        // })
+
+    Rx.Observable.concat(ready, jobs)
     //     .do(x => pr.write(x, 'html', `./${assetSaver.getFilenamePrefix({url: x.url})}.report.html`))
     //     .do(x => fs.writeFileSync(`./${assetSaver.getFilenamePrefix({url: x.url})}.report.json`, JSON.stringify(x, null, 2)))
+
         .toArray()
         .subscribe(xs => {
             log(xs);
@@ -178,7 +224,8 @@ function run (runners: Runners) {
 }
 
 function log (xs) {
-    const mapped = xs.map((result: Result) => {
+
+    const mapped = xs.filter(x => x.type === ResultTypes.Result).map((result: Result) => {
         const lines  = [];
         const report = result.report;
         report.aggregations.forEach(function (agg) {
