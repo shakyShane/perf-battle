@@ -164,6 +164,13 @@ chrome-devtools-frontend@1.0.422034:
   version "1.0.422034"
   resolved "https://registry.yarnpkg.com/chrome-devtools-frontend/-/chrome-devtools-frontend-1.0.422034.tgz#071c8ce14466b7653032fcd1ad1a4a68d5e3cbd9"
 
+chrome-remote-interface@^0.11.0:
+  version "0.11.1"
+  resolved "https://registry.yarnpkg.com/chrome-remote-interface/-/chrome-remote-interface-0.11.1.tgz#d1818a6bc37ffa7039fa26c6d9801eaef8bb22c1"
+  dependencies:
+    commander "2.1.x"
+    ws "1.x.x"
+
 cli-boxes@^1.0.0:
   version "1.0.0"
   resolved "https://registry.yarnpkg.com/cli-boxes/-/cli-boxes-1.0.0.tgz#4fa917c3e59c94a004cd61f8ee509da651687143"
@@ -227,6 +234,10 @@ combined-stream@^1.0.5:
   resolved "https://registry.yarnpkg.com/combined-stream/-/combined-stream-1.0.5.tgz#938370a57b4a51dea2c77c15d5c5fdf895164009"
   dependencies:
     delayed-stream "~1.0.0"
+
+commander@2.1.x:
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/commander/-/commander-2.1.0.tgz#d121bbae860d9992a3d517ba96f56588e47c6781"
 
 concat-map@0.0.1:
   version "0.0.1"
@@ -634,7 +645,6 @@ lighthouse@GoogleChrome/lighthouse:
   dependencies:
     axe-core "^1.1.1"
     chrome-devtools-frontend "1.0.422034"
-    chrome-remote-interface "^0.11.0"
     debug "^2.2.0"
     devtools-timeline-model "1.1.6"
     gl-matrix "2.3.2"
@@ -644,7 +654,8 @@ lighthouse@GoogleChrome/lighthouse:
     mkdirp "^0.5.1"
     rimraf "^2.2.8"
     semver ">=4.3.3"
-    speedline "1.0.2"
+    speedline "1.0.3"
+    ws "^1.1.1"
     yargs "3.30.0"
 
 listify@^1.0.0:
@@ -1120,9 +1131,9 @@ spdx-license-ids@^1.0.2:
   version "1.2.2"
   resolved "https://registry.yarnpkg.com/spdx-license-ids/-/spdx-license-ids-1.2.2.tgz#c9df7a3424594ade6bd11900d596696dc06bac57"
 
-speedline@1.0.3:
-  version "1.0.3"
-  resolved "https://registry.yarnpkg.com/speedline/-/speedline-1.0.3.tgz#ee1d98c18d583a2d8488aaded2db9334b943dbbd"
+speedline@1.0.2:
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/speedline/-/speedline-1.0.2.tgz#acd8d8ee096cac48f2071a62bd635045ef887341"
   dependencies:
     babar "0.0.3"
     image-ssim "^0.2.0"
@@ -1383,7 +1394,7 @@ write-file-atomic@^1.1.2:
     imurmurhash "^0.1.4"
     slide "^1.1.5"
 
-ws@^1.1.1:
+ws@1.x.x:
   version "1.1.1"
   resolved "https://registry.yarnpkg.com/ws/-/ws-1.1.1.tgz#082ddb6c641e85d4bb451f03d52f06eabdb1f018"
   dependencies:

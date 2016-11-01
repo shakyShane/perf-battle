@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-const base = '/Users/shakyshane/Sites/oss/lighthouse';
+const base = '/Users/shakyshane/sites/jh/lighthouse';
+
 // const base = 'lighthouse';
 import {Report} from "../types/report";
 const minimist = require('minimist');
@@ -92,7 +93,7 @@ if (!maybes.length) {
             })
         });
     } else {
-        run(generateRunners(withoutErrors));
+        run(withoutErrors);
     }
 }
 
@@ -174,44 +175,49 @@ function getJobs (maybes): Input[] {
     });
 }
 
-function run (runners: Runners) {
+function run (inputs: Input[]) {
     const launcher = new ChromeLauncher();
-    const spinner  = ora('Connecting to Chrome').start();
-    const ready    = Rx.Observable
-        .fromPromise(launcher.isDebuggerReady().catch(() => launcher.run()))
-        .flatMap(() => {
-            return Rx.Observable.just(true)
-                .delay(500)
-                .do(() => spinner.succeed())
-        })
-        .ignoreElements();
+    const spinner  = ora('').start();
 
+    const ready    = (function () {
+
+        if (inputs.some((x:Input) => x.type === InputTypes.url)) {
+            return Rx.Observable
+                .fromPromise(launcher.isDebuggerReady())
+                .do(x => spinner.text = 'Connecting to Chrome')
+                .catch(() => {
+                    return Rx.Observable.fromPromise(launcher.run());
+                })
+                .flatMap(() => {
+                    return Rx.Observable.just(true)
+                        .delay(500)
+                        .do(() => spinner.succeed())
+                })
+                .ignoreElements();
+        }
+
+        return Rx.Observable.just(true);
+    })();
+
+    const runners = generateRunners(inputs);
     const jobs = Rx.Observable.from(runners)
         .concatAll()
         .do(x => {
             if (x.type === ResultTypes.PreResult) {
+                spinner.text = `Testing ${x.input.userInput}`;
                 if (x.input.type === InputTypes.url) {
-                    spinner.text = `Testing ${x.input.userInput}`;
                     spinner.start()
                 }
             }
             if (x.type === ResultTypes.Result) {
                 spinner.succeed();
+                if (x.input.type === InputTypes.url) {
+                    // fs.writeFileSync(`./${assetSaver.getFilenamePrefix({url: x.input.userInput})}.report.json`, JSON.stringify(x.report, null, 2));
+                }
             }
         });
 
-
-        // .do((result: Result) => {
-        //     if (result.input.type === InputTypes.url) {
-        //         spinner.color = 'yellow';
-        //         spinner.text = result.input.userInput;
-        //     }
-        // })
-
-    Rx.Observable.concat(ready, jobs)
-    //     .do(x => pr.write(x, 'html', `./${assetSaver.getFilenamePrefix({url: x.url})}.report.html`))
-    //     .do(x => fs.writeFileSync(`./${assetSaver.getFilenamePrefix({url: x.url})}.report.json`, JSON.stringify(x, null, 2)))
-
+    Rx.Observable.concat<Result|boolean>(ready, jobs)
         .toArray()
         .subscribe(xs => {
             log(xs);
@@ -225,38 +231,45 @@ function run (runners: Runners) {
 
 function log (xs) {
 
-    const mapped = xs.filter(x => x.type === ResultTypes.Result).map((result: Result) => {
-        const lines  = [];
-        const report = result.report;
-        report.aggregations.forEach(function (agg) {
-            if (agg.scored) {
-                lines.push(`  ${agg.name} ${getTotalScore(agg)}`);
-            }
-            agg.score.forEach(function (score) {
-                if (score.subItems.length) {
-                    score.subItems.forEach(function (subitem) {
-                        if (typeof subitem === 'string') {
-                            const item = report.audits[<any>subitem];
-                            if (item.displayValue) {
-                                lines.push(`    ${item.description} ${item.displayValue}`)
-                            }
-                        }
-                    });
-                }
-            })
-        });
+    const mapped = xs
+        .filter(x => x.type === ResultTypes.Result)
+        .map((result: Result) => {
 
-        return {
-            url: result.input.url,
-            score: getTotalScore(report.aggregations[0]),
-            lines: lines
-        }
-    });
+            const lines  = [];
+            const report = result.report;
+
+            report.aggregations.forEach(function (agg) {
+
+                if (agg.scored) {
+                    lines.push(`  ${agg.name} ${getTotalScore(agg)}`);
+                }
+
+                agg.score.forEach(function (score) {
+                    if (score.subItems.length) {
+                        score.subItems.forEach(function (subitem) {
+                            if (typeof subitem === 'string') {
+                                const item = report.audits[<any>subitem];
+                                if (item.displayValue) {
+                                    lines.push(`    ${item.description} ${item.displayValue}`)
+                                }
+                            }
+                        });
+                    }
+                })
+            });
+
+            return {
+                score: getTotalScore(report.aggregations[0]),
+                lines: lines,
+                result
+            }
+        });
 
     mapped.forEach(function (item, i) {
-        console.log(i === 0 ? `Winner: ${item.url}` : `${i + 1}: ${item.url}`);
-        item.lines.forEach(function (line) {
-            console.log(line);
-        });
+        console.log(item.result.input.userInput);
+        // console.log(i === 0 ? `Winner: ${item.url}` : `${i + 1}: ${item.url}`);
+        // item.lines.forEach(function (line) {
+        //     console.log(line);
+        // });
     });
 }
