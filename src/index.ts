@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const base = '/Users/shakyshane/sites/jh/lighthouse';
+const base = '/Users/shakyshane/sites/oss/lighthouse';
 
 // const base = 'lighthouse';
 import {Report} from "../types/report";
@@ -10,14 +10,12 @@ const pr = require(`${base}/lighthouse-cli/printer`);
 const ChromeLauncher = require(`${base}/lighthouse-cli/chrome-launcher`).ChromeLauncher;
 const perfOnlyConfig = require(`${base}/lighthouse-core/config/perf.json`);
 const assetSaver = require(`${base}/lighthouse-core/lib/asset-saver`);
-import {resolve} from 'path';
+import {getInputs} from './inputs';
 import * as path from 'path';
-import {existsSync} from 'fs';
 import {Url} from "url";
 
 import Rx = require('rx');
 const {fromPromise, create, concat, just} = Rx.Observable;
-const parse = require('url').parse;
 const ora = require('ora');
 
 process.on('unhandledRejection', (reason) => {
@@ -74,9 +72,9 @@ export interface Input {
 }
 
 if (!maybes.length) {
-    console.log('');
+    console.log('Please provide URLS or paths to JSON files');
 } else {
-    const inputs        = getJobs(maybes);
+    const inputs        = maybes.map(getInputs);
     const withErrors    = inputs.filter(x => x.errors.length > 0);
     const withoutErrors = inputs.filter(x => x.errors.length === 0);
 
@@ -118,90 +116,13 @@ function generateRunners (inputs: Input[]): Rx.Observable<Result>[] {
     });
 }
 
-function getJobs (maybes): Input[] {
-    return maybes.map(function(userInput): Input {
-        const maybeUrl = parse(userInput);
-        if (maybeUrl.protocol && maybeUrl.hostname) {
-            return {
-                type: InputTypes.url,
-                parsed: maybeUrl,
-                url: userInput,
-                errors: [],
-                userInput
-            }
-        } else {
-            if (maybeUrl.pathname.match(/\.json$/)) {
-                const resolved = resolve(process.cwd(), maybeUrl.pathname);
-                const parsed   = path.parse(resolved);
-                const exists   = existsSync(resolved);
-                if (!exists) {
-                    return {
-                        type: InputTypes.file,
-                        errors: [{type: InputErrorTypes.FileNotFound}],
-                        parsed: parsed,
-                        resolved: resolved,
-                        userInput
-                    }
-                }
-                const content = fs.readFileSync(resolved, 'utf8');
-                try {
-                    return {
-                        type: InputTypes.file,
-                        errors: [],
-                        parsed: parsed,
-                        resolved: resolved,
-                        content,
-                        data: JSON.parse(content),
-                        userInput
-                    }
-                } catch (e) {
-                    return {
-                        type: InputTypes.file,
-                        errors: [{type: InputErrorTypes.JsonParseError, error: e}],
-                        parsed: parsed,
-                        resolved: resolved,
-                        content,
-                        userInput
-                    }
-                }
-            } else {
-                return {
-                    type: InputTypes.unknown,
-                    errors: [{type: InputErrorTypes.InputTypeNotSupported}],
-                    userInput: userInput
-                }
-            }
-        }
-    });
-}
-
 function run (inputs: Input[]) {
     const launcher = new ChromeLauncher();
     const spinner  = ora('').start();
+    const runners  = generateRunners(inputs);
 
-    const ready    = (function () {
-
-        if (inputs.some((x:Input) => x.type === InputTypes.url)) {
-            return Rx.Observable
-                .fromPromise(launcher.isDebuggerReady())
-                .do(x => spinner.text = 'Connecting to Chrome')
-                .catch(() => {
-                    return Rx.Observable.fromPromise(launcher.run());
-                })
-                .flatMap(() => {
-                    return Rx.Observable.just(true)
-                        .delay(500)
-                        .do(() => spinner.succeed())
-                })
-                .ignoreElements();
-        }
-
-        return Rx.Observable.just(true);
-    })();
-
-    const runners = generateRunners(inputs);
-    const jobs = Rx.Observable.from(runners)
-        .concatAll()
+    // Run each job sequentially
+    const jobs = Rx.Observable.from(runners).concatAll()
         .do(x => {
             if (x.type === ResultTypes.PreResult) {
                 spinner.text = `Testing ${x.input.userInput}`;
@@ -211,14 +132,40 @@ function run (inputs: Input[]) {
             }
             if (x.type === ResultTypes.Result) {
                 spinner.succeed();
-                if (x.input.type === InputTypes.url) {
-                    // fs.writeFileSync(`./${assetSaver.getFilenamePrefix({url: x.input.userInput})}.report.json`, JSON.stringify(x.report, null, 2));
-                }
+                // if (x.input.type === InputTypes.url) {
+                //     // fs.writeFileSync(`./${assetSaver.getFilenamePrefix({url: x.input.userInput})}.report.json`, JSON.stringify(x.report, null, 2));
+                // }
             }
         });
 
-    Rx.Observable.concat<Result|boolean>(ready, jobs)
-        .toArray()
+    /**
+     * Get the chrome launcher
+     * @returns {Observable<any>}
+     */
+    function getLauncher () {
+        return fromPromise(launcher.isDebuggerReady()) // check if debugger is ready
+            .do(x => spinner.text = 'Connecting to Chrome') // set the spinner
+            .catch(() => fromPromise(launcher.run())) // if isDebuggerReady throws, call it's run method
+            .flatMap(() => just(true).do(() => spinner.succeed())) // when the promise resolves, set the spinner
+            .ignoreElements(); // ignore any values from this stream
+    }
+
+    /**
+     * If any URLS are give, launch chrome + run the jobs
+     * Otherwise, just run the jobs
+     * @type {Rx.Observable}
+     */
+    const queue = (function (): Rx.Observable<any> {
+        if (inputs.some((x:Input) => x.type === InputTypes.url)) {
+            return Rx.Observable.concat<Result|boolean>(getLauncher(), jobs);
+        }
+        return jobs;
+    })();
+
+    /**
+     * Run the queue
+     */
+    queue.toArray()
         .subscribe(xs => {
             log(xs);
         }, err => {
@@ -265,8 +212,11 @@ function log (xs) {
             }
         });
 
-    mapped.forEach(function (item, i) {
-        console.log(item.result.input.userInput);
+    console.log('----RESULTS----');
+    mapped.slice().sort((a, b) => a.score - b.score).forEach(function (item, i) {
+        console.log(` ${i+1}: ${item.result.input.userInput}`);
+
+        // console.log(item.result.input.userInput, item.score);
         // console.log(i === 0 ? `Winner: ${item.url}` : `${i + 1}: ${item.url}`);
         // item.lines.forEach(function (line) {
         //     console.log(line);
