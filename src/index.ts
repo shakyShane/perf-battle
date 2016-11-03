@@ -6,6 +6,7 @@ import {Report} from "../types/report";
 const minimist = require('minimist');
 const lh = require(`${base}/lighthouse-core`);
 const fs = require('fs');
+const compile = require('eazy-logger').compile;
 const pr = require(`${base}/lighthouse-cli/printer`);
 const ChromeLauncher = require(`${base}/lighthouse-cli/chrome-launcher`).ChromeLauncher;
 const perfOnlyConfig = require(`${base}/lighthouse-core/config/perf.json`);
@@ -41,6 +42,11 @@ export interface Result {
     report?: Report
     input: Input
     type: ResultTypes
+}
+export interface ResultScore {
+    score: number
+    lines: string[]
+    result: Result
 }
 
 export enum InputTypes {
@@ -118,23 +124,20 @@ function generateRunners (inputs: Input[]): Rx.Observable<Result>[] {
 
 function run (inputs: Input[]) {
     const launcher = new ChromeLauncher();
-    const spinner  = ora('').start();
+    const spinner  = ora('Connecting to Chrome').start();
     const runners  = generateRunners(inputs);
 
     // Run each job sequentially
     const jobs = Rx.Observable.from(runners).concatAll()
         .do(x => {
             if (x.type === ResultTypes.PreResult) {
-                spinner.text = `Testing ${x.input.userInput}`;
-                if (x.input.type === InputTypes.url) {
-                    spinner.start()
-                }
+                spinner.text = compile(`Testing {bold:${x.input.userInput}}`);
+                spinner.start();
             }
             if (x.type === ResultTypes.Result) {
+                const score = getTotalScore(x.report.aggregations[0]);
+                spinner.text = compile(`{cyan.bold:${score}}{cyan:/100} ${x.input.userInput}`);
                 spinner.succeed();
-                // if (x.input.type === InputTypes.url) {
-                //     // fs.writeFileSync(`./${assetSaver.getFilenamePrefix({url: x.input.userInput})}.report.json`, JSON.stringify(x.report, null, 2));
-                // }
             }
         });
 
@@ -143,8 +146,10 @@ function run (inputs: Input[]) {
      * @returns {Observable<any>}
      */
     function getLauncher () {
-        return fromPromise(launcher.isDebuggerReady()) // check if debugger is ready
-            .do(x => spinner.text = 'Connecting to Chrome') // set the spinner
+        return just(true)
+            .do(x => spinner.text = 'Connecting to Chrome')
+            .flatMap(fromPromise(launcher.isDebuggerReady())) // check if debugger is ready
+            // .do(x => spinner.text = 'Connecting to Chrome') // set the spinner
             .catch(() => fromPromise(launcher.run())) // if isDebuggerReady throws, call it's run method
             .flatMap(() => just(true).do(() => spinner.succeed())) // when the promise resolves, set the spinner
             .ignoreElements(); // ignore any values from this stream
@@ -165,13 +170,21 @@ function run (inputs: Input[]) {
     /**
      * Run the queue
      */
-    queue.toArray()
+    process.removeAllListeners('SIGINT');
+    process.on('SIGINT', function () {
+        launcher.kill();
+        process.exit(0);
+    });
+
+    const sub = queue
+        .toArray()
         .subscribe(xs => {
             log(xs);
         }, err => {
-            console.error(err);
+            spinner.fail();
             launcher.kill();
         }, () => {
+            spinner.clear();
             launcher.kill();
         });
 }
@@ -180,7 +193,7 @@ function log (xs) {
 
     const mapped = xs
         .filter(x => x.type === ResultTypes.Result)
-        .map((result: Result) => {
+        .map((result: Result): ResultScore => {
 
             const lines  = [];
             const report = result.report;
@@ -197,7 +210,11 @@ function log (xs) {
                             if (typeof subitem === 'string') {
                                 const item = report.audits[<any>subitem];
                                 if (item.displayValue) {
-                                    lines.push(`    ${item.description} ${item.displayValue}`)
+                                    lines.push(`    ${item.description} {yellow:${item.displayValue}}`)
+                                }
+                            } else {
+                                if (subitem.displayValue) {
+                                    lines.push(`    ${subitem.description} {yellow:${subitem.displayValue}}`)
                                 }
                             }
                         });
@@ -212,14 +229,38 @@ function log (xs) {
             }
         });
 
-    console.log('----RESULTS----');
-    mapped.slice().sort((a, b) => a.score - b.score).forEach(function (item, i) {
-        console.log(` ${i+1}: ${item.result.input.userInput}`);
+    console.log(compile(`
+{yellow:  -~-~ Summary ~-~-
+`));
+    const sorted = mapped.slice().sort((a, b) => b.score - a.score);
 
-        // console.log(item.result.input.userInput, item.score);
-        // console.log(i === 0 ? `Winner: ${item.url}` : `${i + 1}: ${item.url}`);
-        // item.lines.forEach(function (line) {
-        //     console.log(line);
-        // });
-    });
+    printSummary(sorted);
+
+    console.log(compile(`
+{yellow:  -~-~ Details ~-~-
+`));
+    printLines(sorted);
+
+    function getInputDisplay (resultScore: ResultScore): string {
+        if (resultScore.result.input.type === InputTypes.file) {
+            return `{bold:${resultScore.result.input.data.url}} [file] {gray:(${resultScore.result.input.userInput})}`;
+        }
+        return `{bold:${resultScore.result.input.userInput}}`;
+    }
+
+    function printSummary(sorted) {
+        sorted.forEach(function (item: ResultScore, i) {
+            const inputDisplay = getInputDisplay(item);
+            console.log(compile(`  {bold:${i+1}:} {cyan.bold:${item.score}}{cyan:/100} ${inputDisplay}`));
+        });
+    }
+
+    function printLines (sorted: ResultScore[]) {
+        sorted.forEach((resultScore, i) => {
+            console.log(compile(`  {bold:${i+1}:} {cyan.bold:${resultScore.score}}{cyan:/100} ${getInputDisplay(resultScore)}`));
+            resultScore.lines.forEach(function (line) {
+                console.log(compile(`  ` + line));
+            })
+        })
+    }
 }
