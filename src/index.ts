@@ -1,35 +1,31 @@
 #!/usr/bin/env node
-const base = '/Users/shakyshane/sites/oss/lighthouse';
+// const base = '/Users/shakyshane/sites/oss/lighthouse';
+import {getTotalScore} from "./utils";
+const base = 'lighthouse';
 
 // const base = 'lighthouse';
 import {Report} from "../types/report";
 const minimist = require('minimist');
 const lh = require(`${base}/lighthouse-core`);
 const fs = require('fs');
-const compile = require('eazy-logger').compile;
 const pr = require(`${base}/lighthouse-cli/printer`);
+const compile = require('eazy-logger').compile;
 const ChromeLauncher = require(`${base}/lighthouse-cli/chrome-launcher`).ChromeLauncher;
 const perfOnlyConfig = require(`${base}/lighthouse-core/config/perf.json`);
 const assetSaver = require(`${base}/lighthouse-core/lib/asset-saver`);
 import {getInputs} from './inputs';
 import * as path from 'path';
 import {Url} from "url";
+import {perfReporter} from './output-perf';
 
 import Rx = require('rx');
+import {sizeReporter} from "./output-size";
 const {fromPromise, create, concat, just} = Rx.Observable;
 const ora = require('ora');
 
 process.on('unhandledRejection', (reason) => {
     console.log('Reason: ' + reason);
 });
-
-function getTotalScore (aggregation) {
-    const totalScore = aggregation.score.reduce((total, s) => {
-            return total + s.overall;
-        }, 0) / aggregation.score.length;
-
-    return Math.round(totalScore * 100);
-}
 
 const maybes = minimist(process.argv.slice(2))._;
 
@@ -53,6 +49,11 @@ export enum InputTypes {
     url     = <any>'url',
     file    = <any>'file',
     unknown = <any>'unknown'
+}
+
+export enum ReportTypes {
+    perf = <any>'perf',
+    size = <any>'size',
 }
 
 export enum InputErrorTypes {
@@ -97,7 +98,7 @@ if (!maybes.length) {
             })
         });
     } else {
-        run(withoutErrors);
+        run(withoutErrors, {reporter: ReportTypes.size});
     }
 }
 
@@ -114,7 +115,7 @@ function generateRunners (inputs: Input[]): Rx.Observable<Result>[] {
             return create<Result>(obs => {
                 concat(
                     base,
-                    fromPromise<Report>(lh(input.userInput, {logLevel: 'silent'}, perfOnlyConfig))
+                    fromPromise<Report>(lh(input.userInput, {logging: 'quiet'}))
                         .map(report => ({type: ResultTypes.Result, input, report}))
                 ).subscribe(obs)
             });
@@ -122,7 +123,23 @@ function generateRunners (inputs: Input[]): Rx.Observable<Result>[] {
     });
 }
 
-function run (inputs: Input[]) {
+const reporterMap = {
+    [ReportTypes.perf]: perfReporter,
+    [ReportTypes.size]: sizeReporter,
+}
+
+function run (inputs: Input[], config = {}) {
+
+
+    const defaults = {
+        reporter: ReportTypes.perf
+    }
+
+    const opts = {
+        ...defaults,
+        ...config
+    }
+
     const launcher = new ChromeLauncher();
     const spinner  = ora('Connecting to Chrome').start();
     const runners  = generateRunners(inputs);
@@ -179,7 +196,9 @@ function run (inputs: Input[]) {
     const sub = queue
         .toArray()
         .subscribe(xs => {
-            log(xs);
+            reporterMap[opts.reporter](xs);
+            spinner.clear();
+            launcher.kill();
         }, err => {
             spinner.fail();
             launcher.kill();
@@ -187,80 +206,4 @@ function run (inputs: Input[]) {
             spinner.clear();
             launcher.kill();
         });
-}
-
-function log (xs) {
-
-    const mapped = xs
-        .filter(x => x.type === ResultTypes.Result)
-        .map((result: Result): ResultScore => {
-
-            const lines  = [];
-            const report = result.report;
-
-            report.aggregations.forEach(function (agg) {
-
-                if (agg.scored) {
-                    lines.push(`  ${agg.name} ${getTotalScore(agg)}`);
-                }
-
-                agg.score.forEach(function (score) {
-                    if (score.subItems.length) {
-                        score.subItems.forEach(function (subitem) {
-                            if (typeof subitem === 'string') {
-                                const item = report.audits[<any>subitem];
-                                if (item.displayValue) {
-                                    lines.push(`    ${item.description} {yellow:${item.displayValue}}`)
-                                }
-                            } else {
-                                if (subitem.displayValue) {
-                                    lines.push(`    ${subitem.description} {yellow:${subitem.displayValue}}`)
-                                }
-                            }
-                        });
-                    }
-                })
-            });
-
-            return {
-                score: getTotalScore(report.aggregations[0]),
-                lines: lines,
-                result
-            }
-        });
-
-    console.log(compile(`
-{yellow:  -~-~ Summary ~-~-
-`));
-    const sorted = mapped.slice().sort((a, b) => b.score - a.score);
-
-    printSummary(sorted);
-
-    console.log(compile(`
-{yellow:  -~-~ Details ~-~-
-`));
-    printLines(sorted);
-
-    function getInputDisplay (resultScore: ResultScore): string {
-        if (resultScore.result.input.type === InputTypes.file) {
-            return `{bold:${resultScore.result.input.data.url}} [file] {gray:(${resultScore.result.input.userInput})}`;
-        }
-        return `{bold:${resultScore.result.input.userInput}}`;
-    }
-
-    function printSummary(sorted) {
-        sorted.forEach(function (item: ResultScore, i) {
-            const inputDisplay = getInputDisplay(item);
-            console.log(compile(`  {bold:${i+1}:} {cyan.bold:${item.score}}{cyan:/100} ${inputDisplay}`));
-        });
-    }
-
-    function printLines (sorted: ResultScore[]) {
-        sorted.forEach((resultScore, i) => {
-            console.log(compile(`  {bold:${i+1}:} {cyan.bold:${resultScore.score}}{cyan:/100} ${getInputDisplay(resultScore)}`));
-            resultScore.lines.forEach(function (line) {
-                console.log(compile(`  ` + line));
-            })
-        })
-    }
 }
