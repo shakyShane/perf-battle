@@ -1,32 +1,58 @@
 const compile = require('eazy-logger').compile;
 const path = require('path');
 const prettyBytes = require('pretty-bytes');
-import {InputTypes, Result, ResultScore, ResultTypes} from "./index";
+import {InputTypes, OutputTypes, Result, ResultScore, ResultTypes} from "./index";
 
 /**
  * Just log the scores to the console
  * @param xs
  */
-export function sizeReporter (xs) {
+export function sizeReporter (xs, opts) {
 
     const mapped = xs
-        .filter(x => x.type === ResultTypes.Result)
+        .filter(x => x.type === ResultTypes.Result);
+
+    const decorated = mapped
         .map(result => {
             return result.report.audits['total-byte-weight'].extendedInfo;
         })
         .map((info) => {
-            return getBytes(info.value.results, '.js');
-        })
-        .map(output => {
-            return output['.js'];
-        })
-        .forEach(item => {
-            console.log(`JS file count: ${item.items.length}`);
-            console.log(`Total size: ${item.total.pretty}`);
+            return getBytes(info.value.results);
         });
+
+    if (opts.output === OutputTypes.stdout) {
+        Object.keys(decorated).forEach(function (key) {
+            decorated[key].forEach(item => {
+                console.log(`${key} file count: ${item.items.length}`);
+                console.log(`Total size: ${item.total.pretty}`);
+            });
+        })
+    }
+
+    if (opts.output === OutputTypes.json) {
+
+        const json = (function () {
+            if (mapped.length === 1) return decorated[0];
+            return mapped.reduce((acc, item, i) => {
+                acc[item.input.userInput] = decorated[i];
+                return acc;
+            }, {});
+        })();
+
+        const fs = require('fs');
+        const path = require('path');
+        const outputPath = (function () {
+            if (opts.outFile) {
+                return path.join(process.cwd(), opts.outFile);
+            } else {
+                return path.join(process.cwd(), 'result.json');
+            }
+        })();
+        fs.writeFileSync(outputPath, JSON.stringify(json, null, 2));
+    }
 }
 
-export function getBytes(values, ext) {
+export function getBytes(values) {
 
     const grouped = values
         .map(value => {

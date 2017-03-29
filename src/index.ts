@@ -27,7 +27,8 @@ process.on('unhandledRejection', (reason) => {
     console.log('Reason: ' + reason);
 });
 
-const maybes = minimist(process.argv.slice(2))._;
+const args = minimist(process.argv.slice(2));
+const maybes = args._;
 
 export type Runners = Rx.Observable<Result>[];
 export enum ResultTypes {
@@ -54,6 +55,11 @@ export enum InputTypes {
 export enum ReportTypes {
     perf = <any>'perf',
     size = <any>'size',
+}
+
+export enum OutputTypes {
+    stdout = <any>'stdout',
+    json = <any>'json',
 }
 
 export enum InputErrorTypes {
@@ -98,7 +104,7 @@ if (!maybes.length) {
             })
         });
     } else {
-        run(withoutErrors, {reporter: ReportTypes.size});
+        run(withoutErrors, args);
     }
 }
 
@@ -132,13 +138,14 @@ function run (inputs: Input[], config = {}) {
 
 
     const defaults = {
-        reporter: ReportTypes.perf
-    }
+        reporter: ReportTypes.perf,
+        output: OutputTypes.stdout
+    };
 
     const opts = {
         ...defaults,
         ...config
-    }
+    };
 
     const launcher = new ChromeLauncher();
     const spinner  = ora('Connecting to Chrome').start();
@@ -196,7 +203,7 @@ function run (inputs: Input[], config = {}) {
     const sub = queue
         .toArray()
         .subscribe(xs => {
-            reporterMap[opts.reporter](xs);
+            reporterMap[opts.reporter](xs, opts);
             spinner.clear();
             launcher.kill();
         }, err => {
