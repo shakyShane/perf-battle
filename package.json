@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "eazy-logger": "^3.0.2",
-    "lighthouse": "GoogleChrome/lighthouse",
+    "lighthouse": "^1.6.3",
     "minimist": "^1.2.0",
     "ora": "^0.3.0",
     "rx": "4.1.0"
